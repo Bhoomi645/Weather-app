@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather Buddy</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root { --bg1:#4facfe; --bg2:#00c6fb; --ink:#10233a; }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: 'Manrope', system-ui, sans-serif; color: var(--ink);
+    min-height: 100vh; padding: 24px 16px;
+    background: linear-gradient(160deg, var(--bg1), var(--bg2));
+    transition: background .6s;
+  }
+  main { max-width: 560px; margin: 0 auto; }
+  h1 { color: #fff; font-size: 1.6rem; margin-bottom: 16px; }
+  form { display: flex; gap: 8px; margin-bottom: 20px; }
+  input { flex: 1; padding: 12px 14px; border: 0; border-radius: 10px; font: inherit; }
+  button { padding: 12px 18px; border: 0; border-radius: 10px; font: inherit; font-weight: 600;
+           background: var(--ink); color: #fff; cursor: pointer; }
+  input:focus-visible, button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  .card { background: rgba(255,255,255,.9); border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+  .now { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .temp { font-size: 4rem; font-weight: 800; line-height: 1; }
+  .icon { font-size: 3.5rem; }
+  .stats { display: flex; gap: 20px; margin-top: 14px; font-size: .95rem; flex-wrap: wrap; }
+  .advice { background: var(--ink); color: #fff; }
+  .days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; text-align: center; }
+  .day small { display: block; opacity: .7; }
+  #msg { color: #fff; margin-bottom: 12px; min-height: 1.2em; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Weather Buddy</h1>
+
+  <form id="form">
+    <input id="city" placeholder="Enter a city, e.g. Mumbai" aria-label="City name" required>
+    <button>Search</button>
+  </form>
+  <p id="msg" role="status"></p>
+
+  <section id="result" hidden>
+    <div class="card now">
+      <div>
+        <h2 id="place"></h2>
+        <div class="temp" id="temp"></div>
+        <div id="desc"></div>
+      </div>
+      <div class="icon" id="icon"></div>
+    </div>
+
+    <div class="card stats" id="stats"></div>
+    <div class="card advice" id="advice"></div>
+    <div class="card days" id="days"></div>
+  </section>
+</main>
+
+<script>
+// Weather codes from Open-Meteo -> text + emoji
+const CODES = {
+  0:["Clear sky","☀️"], 1:["Mostly clear","🌤️"], 2:["Partly cloudy","⛅"], 3:["Overcast","☁️"],
+  45:["Fog","🌫️"], 48:["Fog","🌫️"], 51:["Light drizzle","🌦️"], 53:["Drizzle","🌦️"], 55:["Heavy drizzle","🌧️"],
+  61:["Light rain","🌦️"], 63:["Rain","🌧️"], 65:["Heavy rain","🌧️"], 71:["Light snow","🌨️"],
+  73:["Snow","❄️"], 75:["Heavy snow","❄️"], 80:["Rain showers","🌦️"], 81:["Rain showers","🌧️"],
+  82:["Violent showers","⛈️"], 95:["Thunderstorm","⛈️"], 96:["Thunderstorm","⛈️"], 99:["Thunderstorm","⛈️"]
+};
+const info = code => CODES[code] || ["Unknown","🌡️"];
+const $ = id => document.getElementById(id);
+
+// Step 1: city name -> latitude/longitude (Open-Meteo geocoding)
+async function findCity(name) {
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1`;
+  const data = await (await fetch(url)).json();
+  if (!data.results) throw new Error("City not found. Check the spelling and try again.");
+  return data.results[0];
+}
+
+// Step 2: coordinates -> current weather + 5-day forecast
+async function getWeather(lat, lon) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation,weather_code` +
+    `&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=5&timezone=auto`;
+  return (await fetch(url)).json();
+}
+
+// Step 3: smart suggestion based on the numbers (rule-based "AI" advice)
+function makeAdvice(t, rain, wind, hum, code) {
+  const tips = [];
+  if (t >= 35) tips.push("Very hot. Drink water often and avoid midday sun.");
+  else if (t >= 28) tips.push("Warm day. Light cotton clothes will do.");
+  else if (t >= 18) tips.push("Pleasant weather. A t-shirt is fine.");
+  else if (t >= 8) tips.push("Cool. Carry a jacket.");
+  else tips.push("Cold. Wear warm layers.");
+  if (rain > 0 || [51,53,55,61,63,65,80,81,82,95,96,99].includes(code)) tips.push("Rain expected. Take an umbrella.");
+  if (wind > 30) tips.push("Strong wind. Secure loose items.");
+  if (hum > 80 && t > 25) tips.push("It will feel sticky because of high humidity.");
+  return "💡 " + tips.join(" ");
+}
+
+// Step 4: change background colour by temperature
+function setTheme(t) {
+  const root = document.documentElement.style;
+  if (t >= 32)      { root.setProperty("--bg1", "#f6a04d"); root.setProperty("--bg2", "#f2616a"); }
+  else if (t >= 18) { root.setProperty("--bg1", "#4facfe"); root.setProperty("--bg2", "#00c6fb"); }
+  else              { root.setProperty("--bg1", "#6a85b6"); root.setProperty("--bg2", "#bac8e0"); }
+}
+
+// Step 5: show everything on the page
+function render(place, w) {
+  const c = w.current, [desc, icon] = info(c.weather_code);
+  $("place").textContent = `${place.name}, ${place.country}`;
+  $("temp").textContent = `${Math.round(c.temperature_2m)}°C`;
+  $("desc").textContent = desc;
+  $("icon").textContent = icon;
+  $("stats").innerHTML =
+    `<span>💧 Humidity ${c.relative_humidity_2m}%</span>` +
+    `<span>💨 Wind ${c.wind_speed_10m} km/h</span>` +
+    `<span>🌧️ Rain ${c.precipitation} mm</span>`;
+  $("advice").textContent = makeAdvice(c.temperature_2m, c.precipitation, c.wind_speed_10m, c.relative_humidity_2m, c.weather_code);
+  $("days").innerHTML = w.daily.time.map((d, i) => {
+    const name = new Date(d).toLocaleDateString("en", { weekday: "short" });
+    return `<div class="day"><small>${name}</small><div>${info(w.daily.weather_code[i])[1]}</div>` +
+           `<strong>${Math.round(w.daily.temperature_2m_max[i])}°</strong>` +
+           `<small>${Math.round(w.daily.temperature_2m_min[i])}°</small></div>`;
+  }).join("");
+  setTheme(c.temperature_2m);
+  $("result").hidden = false;
+}
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("msg").textContent = "Loading...";
+  try {
+    const place = await findCity($("city").value.trim());
+    const weather = await getWeather(place.latitude, place.longitude);
+    render(place, weather);
+    $("msg").textContent = "";
+  } catch (err) {
+    $("result").hidden = true;
+    $("msg").textContent = err.message || "Something went wrong. Check your internet and try again.";
+  }
+});
+</script>
+</body>
+</html>
